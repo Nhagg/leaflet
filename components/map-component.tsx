@@ -3,7 +3,25 @@
 import { useEffect, useRef } from 'react'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import 'leaflet.markercluster/dist/MarkerCluster.css'
+import 'leaflet.markercluster/dist/MarkerCluster.Default.css'
+import 'leaflet.markercluster'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import locationsData from './locations.json'
+
+// Interface cho marker data
+interface MarkerData {
+  lat: number
+  lng: number
+  name: string
+  id: string
+  pin?: string
+}
+
+interface LocationResult {
+  marker?: MarkerData
+  name?: string
+}
 
 // Fix cho icon mặc định của Leaflet trong Next.js
 const icon = L.icon({
@@ -24,8 +42,24 @@ export default function MapComponent() {
     // Kiểm tra nếu map đã được khởi tạo
     if (mapRef.current !== null || !mapContainerRef.current) return
 
-    // Khởi tạo map
-    const map = L.map(mapContainerRef.current).setView([21.0285, 105.8542], 13)
+    // Lấy markers từ file locations.json
+    const results = (locationsData as any).results as LocationResult[]
+    const markers = results
+      .filter((result) => result.marker && result.marker.lat && result.marker.lng)
+      .map((result) => result.marker!)
+    
+    // Tính toán center từ markers (trung bình các tọa độ)
+    let centerLat = 33.811
+    let centerLng = -117.922
+    let zoom = 15
+
+    if (markers.length > 0) {
+      centerLat = markers.reduce((sum, m) => sum + m.lat, 0) / markers.length
+      centerLng = markers.reduce((sum, m) => sum + m.lng, 0) / markers.length
+    }
+
+    // Khởi tạo map với center tính toán được
+    const map = L.map(mapContainerRef.current).setView([centerLat, centerLng], zoom)
 
     // Thêm tile layer (OpenStreetMap)
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -33,39 +67,49 @@ export default function MapComponent() {
       maxZoom: 19,
     }).addTo(map)
 
-    // Thêm marker cho Hồ Hoàn Kiếm
-    const marker1 = L.marker([21.0285, 105.8542], { icon }).addTo(map)
-    marker1.bindPopup('<b>Hồ Hoàn Kiếm</b><br>Trung tâm Hà Nội')
+    // Tạo marker cluster group với custom options
+    const markerClusterGroup = (L as any).markerClusterGroup({
+      chunkedLoading: true,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+      zoomToBoundsOnClick: true,
+      maxClusterRadius: 80,
+      iconCreateFunction: function(cluster: any) {
+        const count = cluster.getChildCount()
+        let size = 'small'
+        let sizeClass = 'marker-cluster-small'
+        
+        if (count >= 100) {
+          size = 'large'
+          sizeClass = 'marker-cluster-large'
+        } else if (count >= 10) {
+          size = 'medium'
+          sizeClass = 'marker-cluster-medium'
+        }
+        
+        return L.divIcon({
+          html: `<div><span>${count}</span></div>`,
+          className: `marker-cluster ${sizeClass}`,
+          iconSize: L.point(40, 40)
+        })
+      }
+    })
 
-    // Thêm marker cho Văn Miếu
-    const marker2 = L.marker([21.0277, 105.8355], { icon }).addTo(map)
-    marker2.bindPopup('<b>Văn Miếu - Quốc Tử Giám</b><br>Di tích lịch sử')
+    // Thêm tất cả markers vào cluster group
+    markers.forEach((markerData) => {
+      const marker = L.marker([markerData.lat, markerData.lng], { icon })
+      marker.bindPopup(`<b>${markerData.name}</b><br>${markerData.pin || 'Location'}`)
+      markerClusterGroup.addLayer(marker)
+    })
 
-    // Thêm marker cho Nhà Hát Lớn
-    const marker3 = L.marker([21.0233, 105.8582], { icon }).addTo(map)
-    marker3.bindPopup('<b>Nhà Hát Lớn Hà Nội</b><br>Kiến trúc Pháp')
+    // Thêm cluster group vào map
+    map.addLayer(markerClusterGroup)
 
-    // Thêm circle
-    const circle = L.circle([21.0285, 105.8542], {
-      color: 'blue',
-      fillColor: '#30a3f3',
-      fillOpacity: 0.2,
-      radius: 500
-    }).addTo(map)
-    circle.bindPopup('Bán kính 500m từ Hồ Hoàn Kiếm')
-
-    // Thêm polygon
-    const polygon = L.polygon([
-      [21.0400, 105.8500],
-      [21.0400, 105.8600],
-      [21.0300, 105.8600],
-      [21.0300, 105.8500]
-    ], {
-      color: 'green',
-      fillColor: '#90ee90',
-      fillOpacity: 0.3
-    }).addTo(map)
-    polygon.bindPopup('Khu vực ví dụ')
+    // Fit bounds để hiển thị tất cả markers
+    if (markers.length > 0) {
+      const bounds = L.latLngBounds(markers.map(m => [m.lat, m.lng]))
+      map.fitBounds(bounds, { padding: [50, 50] })
+    }
 
     mapRef.current = map
 
@@ -88,33 +132,37 @@ export default function MapComponent() {
       <div className="grid gap-4 md:grid-cols-3">
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Markers</CardTitle>
+            <CardTitle className="text-sm font-medium">Disney Locations</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">
-              Đánh dấu vị trí trên bản đồ với popup thông tin
+              {(() => {
+                const results = (locationsData as any).results as LocationResult[]
+                const count = results.filter(r => r.marker?.lat && r.marker?.lng).length
+                return `Hiển thị ${count} địa điểm từ Disneyland Resort`
+              })()}
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Circle</CardTitle>
+            <CardTitle className="text-sm font-medium">Marker Clustering</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">
-              Vẽ vùng hình tròn với bán kính tùy chỉnh
+              Zoom out để gom nhóm markers, zoom in để xem chi tiết từng địa điểm
             </p>
           </CardContent>
         </Card>
 
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm font-medium">Polygon</CardTitle>
+            <CardTitle className="text-sm font-medium">Interactive</CardTitle>
           </CardHeader>
           <CardContent>
             <p className="text-xs text-muted-foreground">
-              Vẽ vùng hình đa giác tùy chỉnh
+              Click vào cluster hoặc marker để xem thông tin chi tiết
             </p>
           </CardContent>
         </Card>
